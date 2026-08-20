@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <style>
   :root{
     --bg:#F5F7FC;
@@ -270,12 +271,38 @@
   .obs-record-row .what{flex:1;overflow:hidden;text-overflow:ellipsis;}
   .obs-record-row .when{flex:0 0 auto;color:var(--ink-faint);font-size:11px;}
 
-  /* ---------- 교우관계 시각화 ---------- */
-  #relGraphView svg{width:100%;height:auto;display:block;}
-  .rel-node circle{fill:var(--panel);stroke:var(--blue);stroke-width:2px;}
-  .rel-node text{font-size:9px;fill:var(--ink);font-weight:700;font-family:'Noto Sans KR',sans-serif;}
-  .rel-node.isolated circle{stroke:var(--ink-faint);stroke-dasharray:2 2;}
-  .rel-edge{fill:none;stroke-linecap:round;}
+  /* ---------- 교우관계 시각화 (D3 force-directed) ---------- */
+  #relGraphPerspective{perspective:1200px;position:relative;}
+  #relGraphView{
+    width:100%;height:600px;border-radius:16px;
+    background:radial-gradient(120% 100% at 50% 0%, var(--bg) 0%, var(--panel) 70%);
+    overflow:hidden;position:relative;transform-style:preserve-3d;
+    transform:rotateX(0deg) rotateY(0deg) scale(1);
+    transition:transform .75s cubic-bezier(.22,.9,.25,1);
+  }
+  #relGraphView.rel-swoop{transform:rotateX(9deg) rotateY(-7deg) scale(1.045);}
+  #relGraphView svg{width:100%;height:100%;display:block;cursor:grab;}
+  .rel-node-g{cursor:pointer;}
+  .rel-node-g circle.rel-node-halo{transition:opacity .4s ease, r .4s ease;}
+  .rel-node-g circle.rel-node-core{
+    stroke-width:2.5px; transition:opacity .4s ease, stroke-width .3s ease, filter .3s ease;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,0.18));
+  }
+  .rel-node-g:hover circle.rel-node-core{filter:drop-shadow(0 0 10px currentColor);}
+  .rel-node-g.focused circle.rel-node-core{stroke:#fff; stroke-width:3.5px;}
+  .rel-node-g text{font-size:9.5px;fill:#fff;font-weight:800;font-family:'Noto Sans KR',sans-serif;pointer-events:none;paint-order:stroke;stroke:rgba(0,0,0,0.35);stroke-width:2px;}
+  .rel-node-g.dimmed{opacity:0.16;}
+  .rel-edge{fill:none;stroke-linecap:round;transition:opacity .4s ease, stroke-width .3s ease;}
+  .rel-edge.dimmed{opacity:0.05 !important;}
+  .rel-graph-toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;}
+  .rel-focus-badge{
+    display:none;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);
+    border-radius:999px;padding:6px 8px 6px 14px;font-size:12.5px;font-weight:700;box-shadow:var(--shadow);
+  }
+  .rel-focus-badge.show{display:inline-flex;}
+  .rel-focus-badge button{background:var(--bg);border:none;border-radius:999px;padding:5px 12px;font-size:11.5px;font-weight:700;color:var(--ink-soft);cursor:pointer;}
+  .rel-focus-badge button:hover{background:var(--blue-soft);color:var(--blue);}
+  .rel-hint{font-size:11.5px;color:var(--ink-faint);margin-top:8px;}
   .rel-legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;font-size:11.5px;color:var(--ink-soft);}
   .rel-legend span{display:inline-flex;align-items:center;gap:5px;}
   .rel-legend i{width:14px;height:3px;border-radius:2px;display:inline-block;}
@@ -1152,7 +1179,21 @@
           </div>
 
           <div id="relGraphWrap" style="display:none;">
-            <div id="relGraphView"></div>
+            <div class="rel-legend">
+              <span><i style="background:var(--blue);"></i>친밀도</span>
+              <span><i style="background:var(--green);"></i>학습</span>
+              <span><i style="background:var(--purple);"></i>정서적 지지</span>
+              <span><i style="background:var(--pink);"></i>기피(갈등)</span>
+              <span style="margin-left:auto;color:var(--ink-faint);">원 크기 = 받은 선택 수 · 파란/분홍 = 성별 · 점선 = 아직 선택받지 못한 학생</span>
+            </div>
+            <div class="rel-graph-toolbar">
+              <div class="rel-focus-badge" id="relFocusBadge">
+                🔎 <span id="relFocusName">-</span> 중심 보기
+                <button id="relFocusResetBtn">← 전체 보기</button>
+              </div>
+              <span style="font-size:11.5px;color:var(--ink-faint);margin-left:auto;">💡 학생 원을 클릭하면 그 학생 중심으로 관계망이 재배치돼요. 드래그로 위치도 옮길 수 있어요.</span>
+            </div>
+            <div id="relGraphPerspective"><div id="relGraphView"></div></div>
             <div id="relBarView" style="display:none;"></div>
           </div>
         </div>
@@ -1615,16 +1656,11 @@
           <h1>급식·영양</h1>
           <p>내가 만든 '숲빛 급식판' 웹앱으로 바로 연결돼요.</p>
         </div>
-        <div class="card" style="padding:0;overflow:hidden;margin-bottom:20px;">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-            <span style="font-weight:700;font-size:12.5px;">🥗 숲빛 급식판 · 오늘의 학교 급식</span>
-            <a href="https://my-school-meals-jjoajjoa.vercel.app/" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">↗ 새 탭에서 크게 보기</a>
-          </div>
-          <iframe src="https://my-school-meals-jjoajjoa.vercel.app/" id="mealAppFrame" style="width:100%;height:860px;border:none;display:block;" title="오늘의 학교 급식"></iframe>
-        </div>
-        <div class="banner info" style="margin-bottom:20px;">
-          <span>ℹ️</span>
-          <div>실제 배포된 앱(<a href="https://my-school-meals-jjoajjoa.vercel.app/" target="_blank" rel="noopener" style="color:var(--blue);font-weight:700;">https://my-school-meals-jjoajjoa.vercel.app/</a>)에 바로 연결돼요. 화면이 안 보인다면 잠시 후 새로고침해 주세요.</div>
+        <div class="card" style="text-align:center;padding:40px 24px;margin-bottom:20px;">
+          <div style="font-size:36px;margin-bottom:10px;">🥗</div>
+          <div style="font-weight:800;font-size:15px;margin-bottom:6px;">숲빛 급식판 · 오늘의 학교 급식</div>
+          <div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:16px;">사이드바 메뉴를 클릭하면 새 탭에서 바로 열려요. 이 버튼으로도 열 수 있어요.</div>
+          <a href="https://my-school-meals-jjoajjoa.vercel.app/" target="_blank" rel="noopener" class="btn btn-primary">↗ 숲빛 급식판 열기</a>
         </div>
 
         <details style="margin-bottom:16px;">
@@ -1763,16 +1799,11 @@
           <h1>🧒 AI 어린이 뉴스</h1>
           <p>내가 만든 '뉴스 탐정단' 웹앱으로 바로 연결돼요.</p>
         </div>
-        <div class="card" style="padding:0;overflow:hidden;margin-bottom:20px;">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-            <span style="font-weight:700;font-size:12.5px;">🕵️ 뉴스 탐정단 · AI 어린이 뉴스 연구소</span>
-            <a href="https://student-ai-news-jjoajjoa.vercel.app/" target="_blank" rel="noopener" class="btn btn-ghost btn-sm">↗ 새 탭에서 크게 보기</a>
-          </div>
-          <iframe src="https://student-ai-news-jjoajjoa.vercel.app/" id="newsAppFrame" style="width:100%;height:860px;border:none;display:block;" title="AI 어린이 뉴스 연구소"></iframe>
-        </div>
-        <div class="banner info" style="margin-bottom:20px;">
-          <span>ℹ️</span>
-          <div>실제 배포된 앱(<a href="https://student-ai-news-jjoajjoa.vercel.app/" target="_blank" rel="noopener" style="color:var(--blue);font-weight:700;">https://student-ai-news-jjoajjoa.vercel.app/</a>)에 바로 연결돼요. 화면이 안 보인다면 잠시 후 새로고침해 주세요.</div>
+        <div class="card" style="text-align:center;padding:40px 24px;margin-bottom:20px;">
+          <div style="font-size:36px;margin-bottom:10px;">🕵️</div>
+          <div style="font-weight:800;font-size:15px;margin-bottom:6px;">뉴스 탐정단 · AI 어린이 뉴스 연구소</div>
+          <div style="font-size:12.5px;color:var(--ink-faint);margin-bottom:16px;">사이드바 메뉴를 클릭하면 새 탭에서 바로 열려요. 이 버튼으로도 열 수 있어요.</div>
+          <a href="https://student-ai-news-jjoajjoa.vercel.app/" target="_blank" rel="noopener" class="btn btn-primary">↗ 뉴스 탐정단 열기</a>
         </div>
 
         <details style="margin-bottom:16px;">
@@ -2696,36 +2727,132 @@ function filteredEdges(){
   return relCurrentType==='all' ? relEdges : relEdges.filter(e=>e.type===relCurrentType);
 }
 
+let relSimulation = null;
+let relFocusedId = null;
+function relTypeSlug(t){ return {'친밀도':'intimacy','학습':'study','정서적 지지':'support','기피':'avoid'}[t] || 'other'; }
+
 function renderRelGraph(){
-  const wrap = document.getElementById('relGraphView');
+  const container = document.getElementById('relGraphView');
+  if(typeof d3 === 'undefined'){
+    container.innerHTML = `<div class="empty-state" style="padding:60px 0;"><div class="icon">⚠️</div><div class="msg">그래프 그리기 도구(D3.js)를 불러오지 못했어요. 인터넷 연결을 확인하고 새로고침해 주세요.</div></div>`;
+    return;
+  }
+  if(relSimulation) relSimulation.stop();
+  container.innerHTML = '';
+  container.classList.remove('rel-swoop');
+  relFocusedId = null;
+  document.getElementById('relFocusBadge').classList.remove('show');
+
   const n = NAMES.length;
-  const W = 760, H = 560, cx = W/2, cy = H/2, r = Math.min(W,H)/2 - 46;
-  const pos = NAMES.map((_,i)=>{
-    const ang = (i/n)*Math.PI*2 - Math.PI/2;
-    return [cx + r*Math.cos(ang), cy + r*Math.sin(ang)];
-  });
+  const W = container.clientWidth || 760, H = 600, cx = W/2, cy = H/2;
   const indeg = new Array(n).fill(0);
   relEdges.forEach(e=> indeg[e.target]++);
+
+  const nodes = NAMES.map((name,i)=>({
+    id:i, name, gender: GENDERS[i],
+    isolated: indeg[i]===0 && !relEdges.some(e=>e.source===i),
+    r: 10 + Math.min(indeg[i],7)*2.2,
+  }));
   const edges = filteredEdges();
-  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
-  edges.forEach(e=>{
-    const [x1,y1] = pos[e.source], [x2,y2] = pos[e.target];
-    const color = REL_TYPES[e.type] || 'var(--ink-faint)';
-    svg += `<line class="rel-edge" x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="${color}" stroke-width="1.4" opacity="0.55"/>`;
+  const links = edges.map(e=>({source:e.source, target:e.target, type:e.type}));
+
+  const svg = d3.select(container).append('svg')
+    .attr('viewBox', `0 0 ${W} ${H}`)
+    .attr('preserveAspectRatio', 'xMidYMid meet');
+
+  const defs = svg.append('defs');
+  Object.entries(REL_TYPES).forEach(([type, color])=>{
+    defs.append('marker')
+      .attr('id', 'relArrow-'+relTypeSlug(type))
+      .attr('viewBox', '0 -5 10 10').attr('refX', 17).attr('refY', 0)
+      .attr('markerWidth', 6).attr('markerHeight', 6).attr('orient', 'auto')
+      .append('path').attr('d','M0,-5L10,0L0,5').attr('fill', color);
   });
-  pos.forEach((p,i)=>{
-    const isolated = indeg[i]===0 && !relEdges.some(e=>e.source===i);
-    svg += `<g class="rel-node ${isolated?'isolated':''}"><circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="${9+Math.min(indeg[i],6)}"/><text x="${p[0].toFixed(1)}" y="${(p[1]+3).toFixed(1)}" text-anchor="middle">${i+1}</text></g>`;
-  });
-  svg += `</svg>`;
-  const legend = `<div class="rel-legend">
-    <span><i style="background:var(--blue);"></i>친밀도</span>
-    <span><i style="background:var(--green);"></i>학습</span>
-    <span><i style="background:var(--purple);"></i>정서적 지지</span>
-    <span><i style="background:var(--pink);"></i>기피(갈등)</span>
-    <span style="margin-left:auto;color:var(--ink-faint);">원 크기 = 받은 선택 수 · 점선 = 아직 선택받지 못한 학생</span>
-  </div>`;
-  wrap.innerHTML = legend + svg;
+
+  const linkSel = svg.append('g').selectAll('line')
+    .data(links).join('line')
+    .attr('class','rel-edge')
+    .attr('stroke', d=> REL_TYPES[d.type] || 'var(--ink-faint)')
+    .attr('stroke-width', 1.6).attr('opacity', 0.55)
+    .attr('marker-end', d=> `url(#relArrow-${relTypeSlug(d.type)})`);
+
+  const nodeG = svg.append('g').selectAll('g')
+    .data(nodes).join('g')
+    .attr('class', d=> 'rel-node-g' + (d.isolated?' isolated':''))
+    .call(d3.drag()
+      .on('start', (event,d)=>{ if(!event.active) relSimulation.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+      .on('drag', (event,d)=>{ d.fx=event.x; d.fy=event.y; })
+      .on('end', (event,d)=>{ if(!event.active) relSimulation.alphaTarget(relFocusedId===null?0.025:0); d.fx=null; d.fy=null; }));
+
+  nodeG.append('circle').attr('class','rel-node-halo')
+    .attr('r', d=> d.r+7)
+    .attr('fill', d=> d.gender==='여' ? 'var(--pink)' : 'var(--blue)')
+    .attr('opacity', 0.14);
+  nodeG.append('circle').attr('class','rel-node-core')
+    .attr('r', d=>d.r)
+    .attr('fill', d=> d.gender==='여' ? 'var(--pink)' : 'var(--blue)')
+    .attr('stroke', d=> d.gender==='여' ? '#c9497d' : '#2f5fc7')
+    .attr('stroke-dasharray', d=> d.isolated ? '3 3' : null);
+  nodeG.append('text').attr('text-anchor','middle').attr('dy', 3).text(d=> d.id+1);
+
+  nodeG.on('click', (event,d)=>{ event.stopPropagation(); focusOnNode(d.id); });
+  svg.on('click', ()=> resetFocus());
+
+  function ticked(){
+    linkSel.attr('x1', d=>d.source.x).attr('y1', d=>d.source.y).attr('x2', d=>d.target.x).attr('y2', d=>d.target.y);
+    nodeG.attr('transform', d=> `translate(${d.x},${d.y})`);
+  }
+
+  const simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d=>d.id).distance(90).strength(0.35))
+    .force('charge', d3.forceManyBody().strength(-190))
+    .force('center', d3.forceCenter(cx, cy))
+    .force('collide', d3.forceCollide().radius(d=> d.r+14))
+    .alphaDecay(0.02).velocityDecay(0.35)
+    .on('tick', ticked);
+  relSimulation = simulation;
+
+  function focusOnNode(id){
+    relFocusedId = id;
+    const neighborSet = new Set([id]);
+    edges.forEach(e=>{
+      if(e.source===id) neighborSet.add(e.target);
+      if(e.target===id) neighborSet.add(e.source);
+    });
+    document.getElementById('relFocusBadge').classList.add('show');
+    document.getElementById('relFocusName').textContent = NAMES[id];
+    container.classList.add('rel-swoop');
+    setTimeout(()=> container.classList.remove('rel-swoop'), 650);
+
+    nodeG.classed('focused', d=> d.id===id);
+    nodeG.classed('dimmed', d=> !neighborSet.has(d.id));
+    linkSel.classed('dimmed', d=>{
+      const s = d.source.id ?? d.source, t = d.target.id ?? d.target;
+      return !(neighborSet.has(s) && neighborSet.has(t));
+    });
+
+    simulation.force('radial', d3.forceRadial(
+      d=> d.id===id ? 0 : (neighborSet.has(d.id) ? 130 : 260), cx, cy
+    ).strength(d=> d.id===id ? 1 : (neighborSet.has(d.id) ? 0.55 : 0.12)));
+    simulation.force('charge', d3.forceManyBody().strength(-90));
+    simulation.alphaTarget(0).alpha(1).restart();
+  }
+  function resetFocus(){
+    if(relFocusedId===null) return;
+    relFocusedId = null;
+    document.getElementById('relFocusBadge').classList.remove('show');
+    nodeG.classed('focused', false).classed('dimmed', false);
+    linkSel.classed('dimmed', false);
+    simulation.force('radial', null);
+    simulation.force('charge', d3.forceManyBody().strength(-190));
+    container.classList.add('rel-swoop');
+    setTimeout(()=> container.classList.remove('rel-swoop'), 650);
+    simulation.alpha(0.9).restart();
+  }
+  document.getElementById('relFocusResetBtn').onclick = e=>{ e.stopPropagation(); resetFocus(); };
+
+  // 완전히 정지하지 않고 은은하게 계속 움직이도록
+  setTimeout(()=>{ if(relFocusedId===null) simulation.alphaTarget(0.025); }, 1300);
 }
 
 function renderRelBars(){
@@ -2745,8 +2872,9 @@ document.getElementById('relViewToggle').addEventListener('click', e=>{
   const btn = e.target.closest('button'); if(!btn) return;
   document.querySelectorAll('#relViewToggle button').forEach(b=>b.classList.toggle('active', b===btn));
   relCurrentView = btn.dataset.view;
-  document.getElementById('relGraphView').style.display = relCurrentView==='graph' ? 'block':'none';
+  document.getElementById('relGraphPerspective').style.display = relCurrentView==='graph' ? 'block':'none';
   document.getElementById('relBarView').style.display = relCurrentView==='bar' ? 'block':'none';
+  document.querySelector('.rel-graph-toolbar').style.display = relCurrentView==='graph' ? 'flex':'none';
 });
 document.getElementById('relTypeToggle').addEventListener('click', e=>{
   const btn = e.target.closest('button'); if(!btn) return;
@@ -4774,8 +4902,19 @@ document.getElementById('profileBtn').addEventListener('click', (e)=>{
   goToPage('schoolSettings');
 });
 
+const EXTERNAL_PAGE_LINKS = {
+  news: 'https://student-ai-news-jjoajjoa.vercel.app/',
+  meal: 'https://my-school-meals-jjoajjoa.vercel.app/',
+};
 document.querySelectorAll('.nav-item[data-target]').forEach(item=>{
-  item.addEventListener('click', ()=> goToPage(item.dataset.target));
+  item.addEventListener('click', ()=>{
+    const target = item.dataset.target;
+    if(EXTERNAL_PAGE_LINKS[target]){
+      window.open(EXTERNAL_PAGE_LINKS[target], '_blank', 'noopener');
+      return;
+    }
+    goToPage(target);
+  });
 });
 
 document.querySelectorAll('.nav-item.folder').forEach(folder=>{
@@ -4852,7 +4991,14 @@ globalSearch.addEventListener('input', ()=>{
 });
 searchDropdown.addEventListener('click', e=>{
   const hit = e.target.closest('.search-hit');
-  if(hit){ goToPage(hit.dataset.target); globalSearch.value=''; searchDropdown.classList.remove('open'); }
+  if(!hit) return;
+  const target = hit.dataset.target;
+  globalSearch.value=''; searchDropdown.classList.remove('open');
+  if(EXTERNAL_PAGE_LINKS[target]){
+    window.open(EXTERNAL_PAGE_LINKS[target], '_blank', 'noopener');
+    return;
+  }
+  goToPage(target);
 });
 document.addEventListener('click', ()=>{
   notifDropdown.classList.remove('open');
